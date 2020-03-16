@@ -1,0 +1,1 @@
+# nfcore-mag-shiny
