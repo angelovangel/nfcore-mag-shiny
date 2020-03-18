@@ -50,6 +50,7 @@
             # snackbars end
             
             shiny::uiOutput("mqc_report_button", inline = TRUE),
+            shiny::uiOutput("where_are_my_results", inline = TRUE),
             
             shiny::div(id = "commands_pannel",
               shinyDirButton(id = "fastq_folder", 
@@ -80,7 +81,7 @@
               absolutePanel(top = 140, right = 20,
                           textInput(inputId = "reads_pattern", 
                                     label = "Fastq reads pattern", 
-                                    value = "*{1,2}.fast(q|q.gz)$"),
+                                    value = "*{1,2}.fastq"),
                           
                           textInput(inputId = "report_title", 
                                     label = "Title of MultiQC report", 
@@ -88,7 +89,7 @@
                           tags$hr(),
                           selectizeInput("nxf_profile", 
                                          label = "Select nextflow profile", 
-                                         choices = c("docker", "conda"), 
+                                         choices = c("docker", "conda", "test"), # if test selected, transform later to "docker,test"
                                          selected = "docker", 
                                          multiple = FALSE),
                           tags$hr(),
@@ -201,12 +202,23 @@
     # show currently selected fastq folder (and count fastq files there)
     
     output$stdout <- renderPrint({
-      if (is.integer(input$fastq_folder)) {
-        cat("No fastq folder selected\n")
+      if (input$nxf_profile == "test") {
+        wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
+        resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
+        cat(
+          " When running with '-profile test' there is no need to select a fastq folder, just press run \n",
+          "Nextflow command to be executed:\n\n",
+          "nextflow run nf-core/mag -profile test \n" 
+        )
+      } else if (is.integer(input$fastq_folder)) {
+        cat("No fastq folder selected. Check the help tab on how to run a nf-core/mag analysis.\n")
+      
       } else {
         nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = "*fast(q|q.gz)$"))
         reads <<- file.path(parseDirPath(volumes, input$fastq_folder),input$reads_pattern)
-        
+        wd <<- parseDirPath(volumes, input$fastq_folder) # set wd to where the fastq file are
+        resultsdir <<- file.path(wd, 'results')
+          
         # setup of tower optional
         optional_params$tower <- if(input$tower) {
           "-with-tower"
@@ -234,7 +246,7 @@
           optional_params$mqc, "\n",
           
           "------------------\n")
-       }
+      }
     })
 
     #---
@@ -246,30 +258,31 @@
     
     # callback function, to be called from run() on each chunk of output
     cb_count <- function(chunk, process) {
-      counts <- str_count(chunk, pattern = "process")
-      #print(counts)
-      val <- progress$getValue() * nfastq
-      progress$inc(amount = counts/nfastq,
-                   detail = paste0(floor(val), " of ", nfastq, " files"))
-
-
+      counts <- str_count(chunk, pattern = "executor >")
+      progress$inc(amount = counts/50)
     }
+    
     # using processx to better control stdout
     observeEvent(input$run, {
-      if(is.integer(input$fastq_folder)) {
-        shinyjs::html(id = "stdout", "\nPlease select a fastq folder first, then press 'Run'...\n", add = TRUE)
+      if(is.integer(input$fastq_folder) & input$nxf_profile != "test" ) {
+        shinyjs::html(id = "stdout", "\nPlease first select a folder containing the fastq files to be analysed, then press 'Run'...\n", add = TRUE)
       } else {
         # set run button color to red?
         shinyjs::disable(id = "commands_pannel")
        
          # change label during run
         shinyjs::html(id = "run", html = "Running... please wait")
-        progress$set(message = "Processed ", value = 0)
+        progress$set(message = "Running... please wait ", value = 0)
         on.exit(progress$close() )
         
       # Dean Attali's solution
       # https://stackoverflow.com/a/30490698/8040734
         withCallingHandlers({
+          profile <- if( input$nxf_profile == "test") {
+            "docker,test"
+          } else {
+            input$nxf_profile
+          }
           shinyjs::html(id = "stdout", "")
           p <- processx::run("nextflow", 
                       args = c("run" ,
@@ -277,14 +290,13 @@
                                # fs::path_abs("nextflow-fastp/main.nf"), # absolute path to avoid pulling from github
                                "--reads", 
                                reads, 
-                               "-profile", 
-                               input$nxf_profile, 
+                               "-profile", profile, # profile is set several lines above
                                optional_params$mqc,
                                optional_params$tower),
                       
-                      wd = parseDirPath(volumes, input$fastq_folder),
+                      wd = wd, # wd is hard set in the renderPrint call for stdout above
                       #echo_cmd = TRUE, echo = TRUE,
-                      stdout_line_callback = function(line, proc) {message(line)}, 
+                      stdout_line_callback = function(line, proc) { message(line) }, 
                       stdout_callback = cb_count,
                       stderr_to_stdout = TRUE, 
                       error_on_status = FALSE
@@ -297,28 +309,32 @@
         )
         if(p$status == 0) {
           # hide command pannel 
-          shinyjs::hide("commands_pannel")
+          shinyjs::enable("commands_pannel")
           
           # clean work dir in case run finished ok
-          work_dir <- paste(parseDirPath(volumes, input$fastq_folder), "/work", sep = "")
+          work_dir <- file.path(wd, "work")
           system2("rm", args = c("-rf", work_dir))
           cat("deleted", work_dir, "\n")
           
             
           # copy mqc to www/ to be able to open it, also use hash to enable multiple concurrent users
-          mqc_report <- paste(parseDirPath(volumes, input$fastq_folder), 
-                           "/results/multiqc_report.html", # make sure the nextflow-fastp pipeline writes to "results-fastp"
-                           sep = "")
-           
+          # if '-profile test' then outdir is 'tests', otherwise 'results' (set by the nf-core/mag configs)
+          mqc_report <- file.path(resultsdir, "MultiQC/multiqc_report.html")
           system2("cp", args = c(mqc_report, paste("www/", mqc_hash, sep = "")) )
           
           
-          # render the new action buttons to show report
+          # render the new action buttons to show report and location of results
           output$mqc_report_button <- renderUI({
             actionButton("mqc", label = "MultiQC report", 
                          icon = icon("th"), 
                          onclick = sprintf("window.open('%s', '_blank')", mqc_hash)
             )
+          })
+          
+          output$where_are_my_results <- renderUI({
+            actionButton("results_location_button", 
+                         label = "Where are my results?", 
+                         icon = icon("question"))
           })
           
           #
@@ -347,21 +363,16 @@
       }
       
     })
+  #----
+  # OBSERVERS
     
-    #------------------------------------------------------------
-    session$onSessionEnded(function() {
-      # delete own mqc from www, it is meant to be temp only 
-      system2("rm", args = c("-rf", paste("www/", mqc_hash, sep = "")) )
-      
-      #user management
-      isolate({
-        users$count <- users$count - 1
-        writeLines(as.character(users$count), con = "userlog")
-      })
-      
-    })
-  
-    #---
+  observeEvent(input$results_location_button, {
+    shinyalert(title = "The location of the results folder is:", 
+               text = resultsdir, 
+               type = "info", 
+               showCancelButton = FALSE, 
+               showConfirmButton = TRUE)
+  })
   # ask to start over if title or reset clicked
   #----                     
   observeEvent(input$magButton, {
@@ -385,6 +396,19 @@
                callbackJS = "function(x) { if (x == true) {history.go(0);} }" # restart app by reloading page
       )
     })
+  
+  #------------------------------------------------------------
+  session$onSessionEnded(function() {
+    # delete own mqc from www, it is meant to be temp only 
+    system2("rm", args = c("-rf", paste("www/", mqc_hash, sep = "")) )
+    
+    #user management
+    isolate({
+      users$count <- users$count - 1
+      writeLines(as.character(users$count), con = "userlog")
+    })
+    
+  })
    
     
  }
