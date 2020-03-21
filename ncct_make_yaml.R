@@ -2,6 +2,9 @@
 # entries match inputs from ncct_modal.R
 # passed as arg to nextflow-bcl (--multiqc_config file.yaml)
 
+# when the yaml file is passed to multiqc with -c, the report will have this custom header
+# https://multiqc.info/docs/#customising-reports
+
 require(yaml)
 
 ncct_make_yaml <- function(customer = "", 

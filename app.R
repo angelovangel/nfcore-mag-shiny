@@ -82,11 +82,20 @@
                           textInput(inputId = "reads_pattern", 
                                     label = "Fastq reads pattern", 
                                     value = "*{1,2}.fastq"),
-                          
-                          textInput(inputId = "report_title", 
-                                    label = "Title of MultiQC report", 
-                                    value = "Summarized fastp report"),
                           tags$hr(),
+                          checkboxInput("single_end", "Single-end data", value = FALSE),
+                          tags$hr(),
+                          
+                          checkboxInput("manifest", "Hybrid (long+short reads) data", value = FALSE),
+                          tags$hr(),
+                          
+                          shinyFilesButton(id = "manifest_file", 
+                                           label = "Choose manifest file",
+                                           title = "Select manifest file for hybrid data (see nf-core/mag docs)",
+                                           multiple = FALSE, 
+                                           icon = icon("file")),
+                          tags$hr(),
+                          
                           selectizeInput("nxf_profile", 
                                          label = "Select nextflow profile", 
                                          choices = c("docker", "conda", "test"), # if test selected, transform later to "docker,test"
@@ -115,9 +124,10 @@
     options(shiny.launch.browser = TRUE, shiny.error=recover)
     
     #----
-    # reactive for optional params for nxf, s
+    # reactive for optional params for nxf, 
+    # like tower, optional multiqc config (all nf-core pipes take this), and if hybrid is used
     # set TOWER_ACCESS_TOKEN in ~/.Renviron
-    optional_params <- reactiveValues(tower = "", mqc = "")
+    optional_params <- reactiveValues(tower = "", mqc = "", single_end = "")
     
     # update user counts at each server call
     isolate({
@@ -135,13 +145,13 @@
       shinyjs::toggle("optional_inputs")
     })
     
-    # shinyFeeback observers
-    # title too short?
-    observeEvent(input$report_title, {
-      feedbackWarning(inputId = "report_title", 
-                      condition = nchar(input$report_title) <= 10, 
-                      text = "Title too short?")
+    # observer for manifest file in case hybrid
+    # hide("manifest_file")
+    observeEvent(input$manifest, {
+      shinyjs::toggle("manifest_file")
     })
+    
+    # shinyFeeback observers
     
     observe({
       if(input$tower) {
@@ -198,54 +208,78 @@
                    session = session, 
                    restrictions = system.file(package = "base")) 
     
+    # file choose management - manifest
+    shinyFileChoose(input, "manifest_file", 
+                    roots = volumes, 
+                    session = session)
+    
     #-----------------------------------
-    # show currently selected fastq folder (and count fastq files there)
+    # The main work of setting args for the nxf call is done here
+    # in case the reactive vals are "", then they are not used by nxf
     
     output$stdout <- renderPrint({
+      # case1: -profile test 
       if (input$nxf_profile == "test") {
         wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
         resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
+        # build nxf command
+        nxf_args <<- c("run nf-core/mag", "-profile test,docker") 
         cat(
           " When running with '-profile test' there is no need to select a fastq folder, just press run \n",
           "Nextflow command to be executed:\n\n",
-          "nextflow run nf-core/mag -profile test \n" 
+          "nextflow", nxf_args 
         )
+      
+      # case2: hybrid data selected
+      } else if (input$manifest) {
+          nxf_args <<- c("run nf-core/mag", 
+                         "--manifest", parseFilePaths(volumes, input$manifest_file)$datapath, 
+                         "-profile", input$nxf_profile )
+          cat(" Nextflow command to be executed:\n\n",
+              "nextflow", nxf_args)
+          
+      # case3: no fastq folder selected
       } else if (is.integer(input$fastq_folder)) {
         cat("No fastq folder selected. Check the help tab on how to run a nf-core/mag analysis.\n")
-      
-      } else {
-        nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = "*fast(q|q.gz)$"))
-        reads <<- file.path(parseDirPath(volumes, input$fastq_folder),input$reads_pattern)
-        wd <<- parseDirPath(volumes, input$fastq_folder) # set wd to where the fastq file are
-        resultsdir <<- file.path(wd, 'results')
-          
-        # setup of tower optional
-        optional_params$tower <- if(input$tower) {
-          "-with-tower"
-        } else {
-          ""
-        }
         
-        #shinyjs::hide("fastq_folder")
-        cat(
-          " Selected folder:\n",
-          parseDirPath(volumes, input$fastq_folder), "\n",
-          "------------------\n\n",
+      # case4: fastq folder selected, short-reads only
+      } else {
+          nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = "*fast(q|q.gz)$"))
+          reads <<- file.path(parseDirPath(volumes, input$fastq_folder),input$reads_pattern)
+          wd <<- parseDirPath(volumes, input$fastq_folder) # set wd to where the fastq file are
+          resultsdir <<- file.path(wd, 'results')
           
+          optional_params$tower <- if(input$tower) {
+            "-with-tower"
+          } else {
+            ""
+          }
           
-          "Number of fastq files found:\n",
-          nfastq, "\n",
-          "------------------\n\n",
+          optional_params$single_end <- if(input$single_end) {
+            "--singleEnd"
+          } else {
+            ""
+          }  
+            
+          nxf_args <<- c("run nf-core/mag", 
+                         "--reads", reads, 
+                         optional_params$single_end, 
+                         "-profile", input$nxf_profile, 
+                         optional_params$tower, optional_params$mqc)
+            
+          #shinyjs::hide("fastq_folder")
+          cat(
+            " Selected folder:\n",
+            parseDirPath(volumes, input$fastq_folder), "\n",
+            "------------------\n\n",
           
+            "Number of fastq files found:\n",
+            nfastq, "\n",
+            "------------------\n\n",
           
-          "Nextflow command to be executed:\n",
-          "nextflow run nf-core/mag", "\\ \n",
-          "--reads", reads, "\\ \n",
-          "-profile", 
-          input$nxf_profile, optional_params$tower, "\\ \n",
-          optional_params$mqc, "\n",
-          
-          "------------------\n")
+            "Nextflow command to be executed:\n",
+            "nextflow", nxf_args, "\n",
+            "------------------\n")
       }
     })
 
@@ -278,22 +312,10 @@
       # Dean Attali's solution
       # https://stackoverflow.com/a/30490698/8040734
         withCallingHandlers({
-          profile <- if( input$nxf_profile == "test") {
-            "docker,test"
-          } else {
-            input$nxf_profile
-          }
+          
           shinyjs::html(id = "stdout", "")
           p <- processx::run("nextflow", 
-                      args = c("run" ,
-                               "nf-core/mag", # in case it is pulled before with nextflow pull and is in ~/.nextflow
-                               # fs::path_abs("nextflow-fastp/main.nf"), # absolute path to avoid pulling from github
-                               "--reads", 
-                               reads, 
-                               "-profile", profile, # profile is set several lines above
-                               optional_params$mqc,
-                               optional_params$tower),
-                      
+                      args = nxf_args,
                       wd = wd, # wd is hard set in the renderPrint call for stdout above
                       #echo_cmd = TRUE, echo = TRUE,
                       stdout_line_callback = function(line, proc) { message(line) }, 
