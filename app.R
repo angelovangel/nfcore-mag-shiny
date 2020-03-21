@@ -53,11 +53,26 @@
             shiny::uiOutput("where_are_my_results", inline = TRUE),
             
             shiny::div(id = "commands_pannel",
+              selectizeInput("step1", label = NULL,
+                             choices = list(
+                               "Short reads only" = list("single_end", "paired_end"),
+                               "Short + long reads" = list("hybrid"),
+                               "Test run" = list("test", "test_hybrid")
+                               ),
+                             multiple = FALSE, selected = "paired_end", width = "20%"),
+              
               shinyDirButton(id = "fastq_folder", 
                              label = "Select fastq folder", 
                              style = "color: #D35400; font-weight: bold;", 
                              title = "Please select a folder with fastq files", 
                              icon = icon("folder-open")),
+              shinyFilesButton(id = "manifest_file", 
+                               label = "Choose manifest file",
+                               style = "color: #D35400; font-weight: bold;", 
+                               title = "Select manifest file for hybrid data (see nf-core/mag docs)",
+                               multiple = FALSE, 
+                               icon = icon("file")),
+              
               actionButton("run", "Run nf-core/mag pipeline", 
                          style = "color: #D35400; font-weight: bold;", 
                          onMouseOver = "this.style.color = '#843500' ", 
@@ -78,27 +93,15 @@
                          onclick ="window.open('http://google.com', '_blank')"),
             
             tags$div(id = "optional_inputs",
-              absolutePanel(top = 140, right = 20,
+              absolutePanel(top = 180, right = 20,
                           textInput(inputId = "reads_pattern", 
                                     label = "Fastq reads pattern", 
                                     value = "*{1,2}.fastq"),
                           tags$hr(),
-                          checkboxInput("single_end", "Single-end data", value = FALSE),
-                          tags$hr(),
-                          
-                          checkboxInput("manifest", "Hybrid (long+short reads) data", value = FALSE),
-                          tags$hr(),
-                          
-                          shinyFilesButton(id = "manifest_file", 
-                                           label = "Choose manifest file",
-                                           title = "Select manifest file for hybrid data (see nf-core/mag docs)",
-                                           multiple = FALSE, 
-                                           icon = icon("file")),
-                          tags$hr(),
                           
                           selectizeInput("nxf_profile", 
                                          label = "Select nextflow profile", 
-                                         choices = c("docker", "conda", "test"), # if test selected, transform later to "docker,test"
+                                         choices = c("docker", "conda"),
                                          selected = "docker", 
                                          multiple = FALSE),
                           tags$hr(),
@@ -127,7 +130,7 @@
     # reactive for optional params for nxf, 
     # like tower, optional multiqc config (all nf-core pipes take this), and if hybrid is used
     # set TOWER_ACCESS_TOKEN in ~/.Renviron
-    optional_params <- reactiveValues(tower = "", mqc = "", single_end = "")
+    optional_params <- reactiveValues(tower = "", mqc = "")
     
     # update user counts at each server call
     isolate({
@@ -145,11 +148,6 @@
       shinyjs::toggle("optional_inputs")
     })
     
-    # observer for manifest file in case hybrid
-    # hide("manifest_file")
-    observeEvent(input$manifest, {
-      shinyjs::toggle("manifest_file")
-    })
     
     # shinyFeeback observers
     
@@ -203,6 +201,7 @@
     
     # dir choose management --------------------------------------
     volumes <- c(Home = fs::path_home(), getVolumes()() )
+    
     shinyDirChoose(input, "fastq_folder", 
                    roots = volumes, 
                    session = session, 
@@ -218,25 +217,33 @@
     # in case the reactive vals are "", then they are not used by nxf
     
     output$stdout <- renderPrint({
-    # case1: -profile test 
-      if (input$nxf_profile == "test") {
+    # case1: -profile test or test_hybrid
+      if (input$step1 == "test" | input$step1 == "test_hybrid") {
+        
+        # hide all that is not needed
+        shinyjs::hide(id = "fastq_folder")
+        shinyjs::hide(id = "manifest_file")
+        shinyjs::hide(id = "reads_pattern")
+        
         wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
         resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
         # build nxf command
-        nxf_args <<- c("run nf-core/mag", "-profile test,docker") 
+        nxf_args <<- c("run nf-core/mag", "-profile", paste(input$nxf_profile, input$step1, sep = ",") ) 
+        
         cat(
-          " When running with '-profile test' there is no need to select a fastq folder, just press run \n",
+          " When running with '-profile test' or 'test_hybrid' there is no need to select a fastq folder, just press run \n",
           "Nextflow command to be executed:\n\n",
           "nextflow", nxf_args 
         )
       
     # case2: hybrid data selected
-      } else if (input$manifest) {
-        cat(" Please select a manifest file\n\n")
+      } else if (input$step1 == "hybrid") {
         
-        # singleEnd and hybrid are incompatible...
-        updateCheckboxInput(session = session, inputId = "single_end", value = FALSE)
-        shinyjs::disable("single_end")
+        shinyjs::hide(id = "fastq_folder")
+        shinyjs::hide(id = "reads_pattern")
+        shinyjs::show(id = "manifest_file")
+        
+        cat(" Please select a manifest file\n\n")
         
         optional_params$tower <- if(input$tower) {
           "-with-tower"
@@ -256,18 +263,22 @@
         cat(" Nextflow command to be executed:\n\n",
               "nextflow", nxf_args)
           
-    # case3: no fastq folder selected
-      } else if (is.integer(input$fastq_folder)) {
-          cat("No fastq folder selected. Check the help tab on how to run a nf-core/mag analysis.\n")
+    # case3: SE or PE selected
+      } else if (input$step1 == "single_end" | input$step1 == "paired_end") {
         
-    # case4: fastq folder selected, short-reads only
-      } else {
+        shinyjs::hide("manifest_file")
+        shinyjs::show("fastq_folder")
+        shinyjs::show("fastq_pattern")
+        
+        if(is.numeric(input$fastq_folder)) {
+          cat("Please select a fastq folder")
+        
+        } else {
           nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = "*fast(q|q.gz)$"))
           reads <<- file.path(parseDirPath(volumes, input$fastq_folder),input$reads_pattern)
           wd <<- parseDirPath(volumes, input$fastq_folder) # set wd to where the fastq file are
           resultsdir <<- file.path(wd, 'results')
           
-          shinyjs::enable("single_end")
           
           optional_params$tower <- if(input$tower) {
             "-with-tower"
@@ -275,31 +286,21 @@
             ""
           }
           
-          optional_params$single_end <- if(input$single_end) {
-            "--singleEnd"
-          } else {
-            ""
-          }  
-            
           nxf_args <<- c("run nf-core/mag", 
-                         "--reads", reads, 
-                         optional_params$single_end, 
-                         "-profile", input$nxf_profile, 
-                         optional_params$tower, optional_params$mqc)
+                       "--reads", reads, 
+                       "-profile", input$nxf_profile, 
+                       optional_params$tower,
+                       optional_params$mqc)
             
-          #shinyjs::hide("fastq_folder")
-          cat(
-            " Selected folder:\n",
-            parseDirPath(volumes, input$fastq_folder), "\n",
-            "------------------\n\n",
+          cat("Number of fastq files found:\n",
+              nfastq, "\n",
+              "------------------\n\n",
           
-            "Number of fastq files found:\n",
-            nfastq, "\n",
-            "------------------\n\n",
-          
-            "Nextflow command to be executed:\n",
-            "nextflow", nxf_args, "\n",
-            "------------------\n")
+              "Nextflow command to be executed:\n",
+              "nextflow", nxf_args, "\n",
+              "------------------\n"
+            )
+        }
       }
     })
 
@@ -318,8 +319,13 @@
     
     # using processx to better control stdout
     observeEvent(input$run, {
-      if(is.integer(input$fastq_folder) & input$nxf_profile != "test" ) {
-        shinyjs::html(id = "stdout", "\nPlease first select a folder containing the fastq files to be analysed, then press 'Run'...\n", add = TRUE)
+      # check for consistency
+      if(input$step1 == "paired_end" | input$step1 == "single_end" & is.integer(input$fastq_folder) ) {
+        shinyjs::html(id = "stdout", "\nPlease first select a folder containing the fastq files to be analysed, then press 'Run'...\n", add = FALSE)
+      
+      } else if (input$step1 == "hybrid" & is.integer(input$manifest_file) ) {
+        shinyjs::html(id = "stdout", "\nPlease select manifest file first", add = FALSE)
+      
       } else {
         # set run button color to red?
         shinyjs::disable(id = "commands_pannel")
