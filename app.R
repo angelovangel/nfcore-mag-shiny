@@ -218,7 +218,7 @@
     # in case the reactive vals are "", then they are not used by nxf
     
     output$stdout <- renderPrint({
-      # case1: -profile test 
+    # case1: -profile test 
       if (input$nxf_profile == "test") {
         wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
         resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
@@ -230,24 +230,44 @@
           "nextflow", nxf_args 
         )
       
-      # case2: hybrid data selected
+    # case2: hybrid data selected
       } else if (input$manifest) {
-          nxf_args <<- c("run nf-core/mag", 
-                         "--manifest", parseFilePaths(volumes, input$manifest_file)$datapath, 
-                         "-profile", input$nxf_profile )
-          cat(" Nextflow command to be executed:\n\n",
+        cat(" Please select a manifest file\n\n")
+        
+        # singleEnd and hybrid are incompatible...
+        updateCheckboxInput(session = session, inputId = "single_end", value = FALSE)
+        shinyjs::disable("single_end")
+        
+        optional_params$tower <- if(input$tower) {
+          "-with-tower"
+        } else {
+          ""
+        }
+        # set wd to the dir where the manifest file is
+        wd <<- fs::path_dir( parseFilePaths(volumes, input$manifest_file)$datapath )
+        resultsdir <<- file.path(wd, 'results')
+        
+        nxf_args <<- c("run nf-core/mag",
+                       "--manifest", parseFilePaths(volumes, input$manifest_file)$datapath, 
+                       "-profile", input$nxf_profile, 
+                       optional_params$tower, 
+                       optional_params$mqc)
+        
+        cat(" Nextflow command to be executed:\n\n",
               "nextflow", nxf_args)
           
-      # case3: no fastq folder selected
+    # case3: no fastq folder selected
       } else if (is.integer(input$fastq_folder)) {
-        cat("No fastq folder selected. Check the help tab on how to run a nf-core/mag analysis.\n")
+          cat("No fastq folder selected. Check the help tab on how to run a nf-core/mag analysis.\n")
         
-      # case4: fastq folder selected, short-reads only
+    # case4: fastq folder selected, short-reads only
       } else {
           nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = "*fast(q|q.gz)$"))
           reads <<- file.path(parseDirPath(volumes, input$fastq_folder),input$reads_pattern)
           wd <<- parseDirPath(volumes, input$fastq_folder) # set wd to where the fastq file are
           resultsdir <<- file.path(wd, 'results')
+          
+          shinyjs::enable("single_end")
           
           optional_params$tower <- if(input$tower) {
             "-with-tower"
