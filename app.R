@@ -59,7 +59,7 @@
                                "Short + long reads" = list("hybrid"),
                                "Test run" = list("test", "test_hybrid")
                                ),
-                             multiple = FALSE, selected = "paired_end", width = "20%"),
+                             multiple = FALSE, selected = "paired_end"),
               
               shinyDirButton(id = "fastq_folder", 
                              label = "Select fastq folder", 
@@ -268,7 +268,7 @@
         
         shinyjs::hide("manifest_file")
         shinyjs::show("fastq_folder")
-        shinyjs::show("fastq_pattern")
+        shinyjs::show("reads_pattern")
         
         if(is.numeric(input$fastq_folder)) {
           cat("Please select a fastq folder")
