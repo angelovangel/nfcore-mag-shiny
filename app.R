@@ -228,7 +228,7 @@
         wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
         resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
         # build nxf command
-        nxf_args <<- c("run nf-core/mag", "-profile", paste(input$nxf_profile, input$step1, sep = ",") ) 
+        nxf_args <<- c("run", "nf-core/mag", "-profile", paste(input$nxf_profile, input$step1, sep = ",") ) 
         
         cat(
           " When running with '-profile test' or 'test_hybrid' there is no need to select a fastq folder, just press run \n",
@@ -254,7 +254,7 @@
         wd <<- fs::path_dir( parseFilePaths(volumes, input$manifest_file)$datapath )
         resultsdir <<- file.path(wd, 'results')
         
-        nxf_args <<- c("run nf-core/mag",
+        nxf_args <<- c("run" ,"nf-core/mag",
                        "--manifest", parseFilePaths(volumes, input$manifest_file)$datapath, 
                        "-profile", input$nxf_profile, 
                        optional_params$tower, 
@@ -286,7 +286,7 @@
             ""
           }
           
-          nxf_args <<- c("run nf-core/mag", 
+          nxf_args <<- c("run", "nf-core/mag", 
                        "--reads", reads, 
                        "-profile", input$nxf_profile, 
                        optional_params$tower,
