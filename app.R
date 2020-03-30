@@ -96,7 +96,7 @@
               absolutePanel(top = 180, right = 20,
                           textInput(inputId = "reads_pattern", 
                                     label = "Fastq reads pattern", 
-                                    value = "*{1,2}.fastq"),
+                                    value = "*R{1,2}_001.fastq.gz"),
                           tags$hr(),
                           
                           selectizeInput("nxf_profile", 
@@ -217,7 +217,7 @@
     # in case the reactive vals are "", then they are not used by nxf
     
     output$stdout <- renderPrint({
-    # case1: -profile test or test_hybrid
+    # CASE1: -profile test or test_hybrid
       if (input$step1 == "test" | input$step1 == "test_hybrid") {
         
         # hide all that is not needed
@@ -236,7 +236,7 @@
           "nextflow", nxf_args 
         )
       
-    # case2: hybrid data selected
+    # CASE2: hybrid data selected
       } else if (input$step1 == "hybrid") {
         
         shinyjs::hide(id = "fastq_folder")
@@ -263,7 +263,7 @@
         cat(" Nextflow command to be executed:\n\n",
               "nextflow", nxf_args)
           
-    # case3: SE or PE selected
+    # CASE3: SE or PE selected
       } else if (input$step1 == "single_end" | input$step1 == "paired_end") {
         
         shinyjs::hide("manifest_file")
@@ -310,7 +310,6 @@
     # setup progress bar and callback function to update it
     progress <- shiny::Progress$new(min = 0, max = 1, style = "old")
     
-    
     # callback function, to be called from run() on each chunk of output
     cb_count <- function(chunk, process) {
       counts <- str_count(chunk, pattern = "executor >")
@@ -320,10 +319,11 @@
     # using processx to better control stdout
     observeEvent(input$run, {
       # check for consistency
-      if(input$step1 == "paired_end" | input$step1 == "single_end" & is.integer(input$fastq_folder) ) {
+      # important that brackets: T | F & F --> T while (T | F) & F --> F
+      if( (input$step1 == "paired_end" | input$step1 == "single_end") & is.integer(input$fastq_folder) ) {
         shinyjs::html(id = "stdout", "\nPlease first select a folder containing the fastq files to be analysed, then press 'Run'...\n", add = FALSE)
       
-      } else if (input$step1 == "hybrid" & is.integer(input$manifest_file) ) {
+      } else if ( input$step1 == "hybrid" & is.integer(input$manifest_file) ) {
         shinyjs::html(id = "stdout", "\nPlease select manifest file first", add = FALSE)
       
       } else {
