@@ -7,6 +7,7 @@
  library(shinyFiles)
  library(shinyjs)
  library(shinyalert)
+ library(dplyr)
  library(processx)
  library(stringr)
  library(digest)
@@ -99,14 +100,23 @@
                                     value = "*R{1,2}_001.fastq.gz"),
                           tags$hr(),
                           
+                          selectizeInput("taxonomy", 
+                                         label = "Taxonomic classification", 
+                                         choices = c("none", "kraken2", "centrifuge"), 
+                                         selected = "none",
+                                         multiple = FALSE),
+                          tags$hr(),
+                          
                           selectizeInput("nxf_profile", 
                                          label = "Select nextflow profile", 
                                          choices = c("docker", "conda"),
                                          selected = "docker", 
                                          multiple = FALSE),
                           tags$hr(),
+                          
                           actionButton("ncct", "Enter NCCT project info"),
                           tags$hr(),
+                          
                           checkboxInput("tower", "Use Nextflow Tower to monitor run", value = FALSE),
                           tags$hr()
                           
@@ -130,7 +140,7 @@
     # reactive for optional params for nxf, 
     # like tower, optional multiqc config (all nf-core pipes take this), and if hybrid is used
     # set TOWER_ACCESS_TOKEN in ~/.Renviron
-    optional_params <- reactiveValues(tower = "", mqc = "")
+    optional_params <- reactiveValues(tower = "", mqc = "", taxonomy = "")
     
     # update user counts at each server call
     isolate({
@@ -217,6 +227,19 @@
     # in case the reactive vals are "", then they are not used by nxf
     
     output$stdout <- renderPrint({
+    
+      # set optional parameters, valid for all CASEs
+      optional_params$tower <- if(input$tower) {
+        "-with-tower"
+      } else {
+        ""
+      }
+      
+      optional_params$taxonomy <- case_when(
+        input$taxonomy == "kraken2" ~ "--kraken2_db ftp://ftp.ccb.jhu.edu/pub/data/kraken2_dbs/minikraken2_v2_8GB_201904_UPDATE.tgz",
+        input$taxonomy == "centrifuge" ~ "--centrifuge_db ftp://ftp.ccb.jhu.edu/pub/infphilo/centrifuge/data/p_compressed+h+v.tar.gz",
+        input$taxonomy == "none" ~ "")
+    
     # CASE1: -profile test or test_hybrid
       if (input$step1 == "test" | input$step1 == "test_hybrid") {
         
@@ -288,7 +311,8 @@
           
           nxf_args <<- c("run", "nf-core/mag", 
                        "--reads", reads, 
-                       "-profile", input$nxf_profile, 
+                       "-profile", input$nxf_profile,
+                       optional_params$taxonomy,
                        optional_params$tower,
                        optional_params$mqc)
             
