@@ -241,6 +241,7 @@
         input$taxonomy == "none" ~ "")
     
     # CASE1: -profile test or test_hybrid
+      # taxonomy is handled by config files in nf-core, so no taxonomy here
       if (input$step1 == "test" | input$step1 == "test_hybrid") {
         
         # hide all that is not needed
@@ -281,6 +282,7 @@
         nxf_args <<- c("run" ,"nf-core/mag",
                        "--manifest", parseFilePaths(volumes, input$manifest_file)$datapath, 
                        "-profile", input$nxf_profile, 
+                       optional_params$taxonomy,
                        optional_params$tower, 
                        optional_params$mqc)
         
