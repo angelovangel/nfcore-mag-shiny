@@ -248,7 +248,8 @@
         shinyjs::hide(id = "manifest_file")
         shinyjs::hide(id = "reads_pattern")
         
-        wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
+        # wd <<- tempdir() # in case test run is made, just a volatile temp dir is needed to store mqc report etc
+        wd <<- file.path(getwd(), "test_wd") # use temp dir in current wd 
         resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
         # build nxf command
         nxf_args <<- c("run", "nf-core/mag", "-profile", paste(input$nxf_profile, input$step1, sep = ",") ) 
@@ -380,8 +381,9 @@
             }
         )
         if(p$status == 0) {
-          # hide command pannel 
+          # run finished successfully
           shinyjs::enable("commands_pannel")
+          shinyjs::html(id = "run", html = "Run nf-core/mag pipeline")
           
           # clean work dir in case run finished ok
           work_dir <- file.path(wd, "work")
