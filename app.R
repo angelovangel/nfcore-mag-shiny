@@ -44,10 +44,11 @@
             #use fancy shiny add-ons,
             useShinyjs(),
             useShinyalert(),
-            use_notiflix_notify(position = "left-bottom"),
+            use_notiflix_notify(position = "left-bottom", width = "380px"),
             
             shiny::uiOutput("mqc_report_button", inline = TRUE),
-            #shiny::uiOutput("where_are_my_results", inline = TRUE),
+            shiny::uiOutput("nxf_report_button", inline = TRUE),
+            shiny::uiOutput("outputFilesLocation", inline = TRUE),
             
             shiny::div(id = "commands_pannel",
               selectizeInput("step1", label = NULL,
@@ -131,6 +132,11 @@
  #### server ####
   server <- function(input, output, session) {
     options(shiny.launch.browser = TRUE, shiny.error=recover)
+    ncores <- parallel::detectCores() # use for info only
+    
+    nx_notify_success(paste("Hello ", Sys.getenv("LOGNAME"), 
+                            "! There are ", ncores, " cores available.", sep = "")
+    )
     
     #----
     # reactive for optional params for nxf, 
@@ -204,6 +210,7 @@
     
     # generate random hash for multiqc report temp file name
     mqc_hash <- sprintf("%s_%s.html", as.integer(Sys.time()), digest::digest(runif(1)) )
+    nxf_hash <- sprintf("%s_%s.html", as.integer(Sys.time()), digest::digest(runif(1)) )
     
     # dir choose management --------------------------------------
     volumes <- c(Home = fs::path_home(), getVolumes()() )
@@ -225,14 +232,15 @@
     output$stdout <- renderPrint({
     
       # set optional parameters, valid for all CASEs
-      optional_params$tower <- if(input$tower) {
-        "-with-tower"
+      if(input$tower) {
+      optional_params$tower <- "-with-tower"
+      nx_notify_warning("Make sure you have TOWER_ACCESS_TOKEN in your env")
       } else {
-        ""
+      optional_params$tower <- ""
       }
       
       optional_params$taxonomy <- case_when(
-        input$taxonomy == "kraken2" ~ "--kraken2_db ftp://ftp.ccb.jhu.edu/pub/data/kraken2_dbs/minikraken2_v2_8GB_201904_UPDATE.tgz",
+        input$taxonomy == "kraken2" ~ "--kraken2_db ftp://ftp.ccb.jhu.edu/pub/data/kraken2_dbs/minikraken_8GB_202003.tgz",
         input$taxonomy == "centrifuge" ~ "--centrifuge_db ftp://ftp.ccb.jhu.edu/pub/infphilo/centrifuge/data/p_compressed+h+v.tar.gz",
         input$taxonomy == "none" ~ "")
     
@@ -251,7 +259,10 @@
         
         resultsdir <<- file.path(wd, "tests") # set to 'tests' by nf-core/mag configs
         # build nxf command
-        nxf_args <<- c("run", "nf-core/mag", "-profile", paste(input$nxf_profile, input$step1, sep = ",") ) 
+        nxf_args <<- c("run", "nf-core/mag", 
+                       "-profile", paste(input$nxf_profile, input$step1, sep = ","),
+                       "--with-report", paste(resultsdir, "/nxf_workflow_report.html", sep = "")
+                       ) 
         
         cat(
           " When running with '-profile test' or 'test_hybrid' there is no need to select a fastq folder, just press run \n",
@@ -281,7 +292,8 @@
                        "--manifest", parseFilePaths(volumes, input$manifest_file)$datapath, 
                        "-profile", input$nxf_profile, 
                        optional_params$taxonomy,
-                       optional_params$tower, 
+                       optional_params$tower,
+                       "--with-report", paste(resultsdir, "/nxf_workflow_report.html", sep = ""),
                        optional_params$mqc)
         
         cat(" Nextflow command to be executed:\n\n",
@@ -319,6 +331,7 @@
                        "-profile", input$nxf_profile,
                        optional_params$taxonomy,
                        optional_params$tower,
+                       "--with-report", paste(resultsdir, "/nxf_workflow_report.html", sep = ""),
                        optional_params$mqc)
             
           cat("Number of fastq files found:\n",
@@ -393,15 +406,23 @@
           
           # clean work dir in case run finished ok
           work_dir <- file.path(wd, "work")
-          system2("rm", args = c("-rf", work_dir))
-          cat("deleted", work_dir, "\n")
+          rmwork <- system2("rm", args = c("-rf", work_dir))
+          if(rmwork == 0) {
+            nx_notify_success(paste("Temp work directory deleted -", work_dir))
+            cat("deleted", work_dir, "\n")
+          } else {
+            nx_notify_warning("Could not delete temp work directory!")
+          }
           
           
             
           # copy mqc to www/ to be able to open it, also use hash to enable multiple concurrent users
           # if '-profile test' then outdir is 'tests', otherwise 'results' (set by the nf-core/mag configs)
           mqc_report <- file.path(resultsdir, "MultiQC/multiqc_report.html")
+          nxf_report <- file.path(resultsdir, "nxf_workflow_report.html")
+          
           system2("cp", args = c(mqc_report, paste("www/", mqc_hash, sep = "")) )
+          system2("cp", args = c(nxf_report, paste("www/", nxf_hash, sep = "")) )
           
           
           # render the new action buttons to show report and location of results
@@ -412,11 +433,26 @@
             )
           })
           
-          output$where_are_my_results <- renderUI({
-            actionButton("results_location_button", 
-                         label = "Where are my results?", 
-                         icon = icon("question"))
+          # render the new nxf report button
+          output$nxf_report_button <- renderUI({
+            actionButton("nxf", label = "Nextflow execution report", 
+                         icon = icon("th"), 
+                         onclick = sprintf("window.open('%s', '_blank')", nxf_hash)
+            )
           })
+          
+          # render outputFilesLocation
+          output$outputFilesLocation <- renderUI({
+            actionButton("outLoc", label = paste("Where are the results?"), 
+                         icon = icon("th"), 
+                         onclick = sprintf("window.alert('%s')", resultsdir)
+                         )
+          })
+          # output$where_are_my_results <- renderUI({
+          #   actionButton("results_location_button", 
+          #                label = "Where are my results?", 
+          #                icon = icon("question"))
+          # })
           
           #
           # build js callback string for shinyalert
@@ -447,13 +483,13 @@
   #----
   # OBSERVERS
     
-  observeEvent(input$results_location_button, {
-    shinyalert(title = "The location of the results folder is:", 
-               text = resultsdir, 
-               type = "info", 
-               showCancelButton = FALSE, 
-               showConfirmButton = TRUE)
-  })
+  # observeEvent(input$results_location_button, {
+  #   shinyalert(title = "The location of the results folder is:", 
+  #              text = resultsdir, 
+  #              type = "info", 
+  #              showCancelButton = FALSE, 
+  #              showConfirmButton = TRUE)
+  # })
   # ask to start over if title or reset clicked
   #----                     
   observeEvent(input$magButton, {
@@ -482,6 +518,7 @@
   session$onSessionEnded(function() {
     # delete own mqc from www, it is meant to be temp only 
     system2("rm", args = c("-rf", paste("www/", mqc_hash, sep = "")) )
+    system2("rm", args = c("-rf", paste("www/", nxf_hash, sep = "")) )
     
     #user management
     isolate({
