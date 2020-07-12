@@ -7,12 +7,13 @@
  library(shinyFiles)
  library(shinyjs)
  library(shinyalert)
+ library(shinypop)
  library(dplyr)
  library(processx)
+ library(parallel)
  library(stringr)
  library(digest)
  library(yaml)
- library(shinyFeedback)
  library(pingr) # to check if server has internet
  
  # define reactive to track user counts
@@ -39,19 +40,14 @@
     tabPanel("nf-core/mag output",
             # attempts to use external progress bar
             includeCSS("css/custom.css"),
-            useShinyFeedback(),
-            useShinyjs(),
-            useShinyalert(), 
             
-            # snackbars begin
-            snackbarWarning(id = "tower_snackbar", 
-                            message = "Is TOWER_ACCESS_TOKEN available in Sys.getenv() ?"),
-            snackbarSuccess("fastp_trimmed", 
-                            message = "Default fastp parameters will be used"),
-            # snackbars end
+            #use fancy shiny add-ons,
+            useShinyjs(),
+            useShinyalert(),
+            use_notiflix_notify(position = "left-bottom"),
             
             shiny::uiOutput("mqc_report_button", inline = TRUE),
-            shiny::uiOutput("where_are_my_results", inline = TRUE),
+            #shiny::uiOutput("where_are_my_results", inline = TRUE),
             
             shiny::div(id = "commands_pannel",
               selectizeInput("step1", label = NULL,
@@ -161,11 +157,11 @@
     
     # shinyFeeback observers
     
-    observe({
-      if(input$tower) {
-      showSnackbar("tower_snackbar")
-      }
-    })
+    # observe({
+    #   if(input$tower) {
+    #   nx_notify_success("Nextflow Tower will be used")
+    #   }
+    # })
     
     
     #----
@@ -201,7 +197,7 @@
                      indexing = input$indexing, 
                      seq_setup = input$seq_setup, 
                      ymlfile = mqc_config_temp)
-      shinyalert(text = "Project info saved!", type = "info", timer = 1500, showConfirmButton = FALSE)
+      nx_notify_success(text = "Project info saved!")
       removeModal()
     })
     
@@ -272,11 +268,11 @@
         
         cat(" Please select a manifest file\n\n")
         
-        optional_params$tower <- if(input$tower) {
-          "-with-tower"
-        } else {
-          ""
-        }
+        # optional_params$tower <- if(input$tower) {
+        #   "-with-tower"
+        # } else {
+        #   ""
+        # }
         # set wd to the dir where the manifest file is
         wd <<- fs::path_dir( parseFilePaths(volumes, input$manifest_file)$datapath )
         resultsdir <<- file.path(wd, 'results')
@@ -302,17 +298,21 @@
           cat("Please select a fastq folder")
         
         } else {
-          nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = "*fast(q|q.gz)$"))
+          nfastq <<- length(list.files(path = parseDirPath(volumes, input$fastq_folder), pattern = input$reads_pattern))
+          if(nfastq == 0) {
+            nx_notify_error("No fastq files found! Check the folder or the fastq pattern used.")
+            }
+          
           reads <<- file.path(parseDirPath(volumes, input$fastq_folder),input$reads_pattern)
           wd <<- parseDirPath(volumes, input$fastq_folder) # set wd to where the fastq file are
           resultsdir <<- file.path(wd, 'results')
           
           
-          optional_params$tower <- if(input$tower) {
-            "-with-tower"
-          } else {
-            ""
-          }
+          # optional_params$tower <- if(input$tower) {
+          #   "-with-tower"
+          # } else {
+          #   ""
+          # }
           
           nxf_args <<- c("run", "nf-core/mag", 
                        "--reads", reads, 
@@ -351,14 +351,16 @@
       # important that brackets: T | F & F --> T while (T | F) & F --> F
       if( (input$step1 == "paired_end" | input$step1 == "single_end") & is.integer(input$fastq_folder) ) {
         shinyjs::html(id = "stdout", "\nPlease first select a folder containing the fastq files to be analysed, then press 'Run'...\n", add = FALSE)
-      
+        nx_notify_error("Please select folder with fastq files")
+        
       } else if ( input$step1 == "hybrid" & is.integer(input$manifest_file) ) {
         shinyjs::html(id = "stdout", "\nPlease select manifest file first", add = FALSE)
-      
+        nx_notify_error("Please select manifest file")
       } else {
         # set run button color to red?
         shinyjs::disable(id = "commands_pannel")
-       
+        nx_notify_success("Looks good, starting run...")
+        
          # change label during run
         shinyjs::html(id = "run", html = "Running... please wait")
         progress$set(message = "Running... please wait ", value = 0)
@@ -394,6 +396,7 @@
           system2("rm", args = c("-rf", work_dir))
           cat("deleted", work_dir, "\n")
           
+          
             
           # copy mqc to www/ to be able to open it, also use hash to enable multiple concurrent users
           # if '-profile test' then outdir is 'tests', otherwise 'results' (set by the nf-core/mag configs)
@@ -424,7 +427,7 @@
                    text = "Pipeline finished, check results folder", 
                    showCancelButton = TRUE, 
                    confirmButtonText = "Open report",
-                   callbackJS = js_cb_string, 
+                   callbackJS = js_cb_string 
                    #callbackR = function(x) { js$openmqc(mqc_url) }
                    )
         } else {
